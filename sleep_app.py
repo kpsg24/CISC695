@@ -131,8 +131,17 @@ if __name__ == "__main__":
         import streamlit as st
         st.title("Sleep and Weather Logger")
 
+        # Always render ZIP input
         zipcode = st.text_input("Enter ZIP code (US)")
-        if st.button("Fetch Weather"):
+
+        # Section for fetching weather
+        st.subheader("Step 1: Get Weather Data")
+        fetch_weather = st.button("Fetch Weather")
+
+        weather_avg = None
+        lat, lon = None, None
+
+        if fetch_weather:
             if not zipcode:
                 st.error("Please enter a ZIP code first.")
             else:
@@ -146,22 +155,29 @@ if __name__ == "__main__":
                         st.error("No nighttime weather data available.")
                         st.stop()
 
+                    st.success("Weather data fetched successfully.")
                     st.write("Nighttime weather summary:", weather_avg)
-
-                    submitted, user_data = collect_user_data_streamlit(st)
-                    if submitted:
-                        record = {
-                            "date": datetime.date.today().isoformat(),
-                            "lat": lat,
-                            "lon": lon,
-                            **user_data,
-                            **weather_avg
-                        }
-                        save_record(record)
-                        st.success("Data saved!")
-                        st.json(record)
 
                 except Exception as e:
                     st.error(str(e))
+
+        # Section for user input (always visible, but requires weather first)
+        st.subheader("Step 2: Log Your Daily Sleep Data")
+        if weather_avg is None:
+            st.info("Please fetch weather data first before entering sleep data.")
+        else:
+            submitted, user_data = collect_user_data_streamlit(st)
+            if submitted:
+                record = {
+                    "date": datetime.date.today().isoformat(),
+                    "lat": lat,
+                    "lon": lon,
+                    **user_data,
+                    **weather_avg
+                }
+                save_record(record)
+                st.success("Data saved!")
+                st.json(record)
     else:
         print("Run this app with: streamlit run sleep_app.py")
+
