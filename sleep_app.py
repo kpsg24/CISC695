@@ -2,19 +2,18 @@ import requests
 import pandas as pd
 import datetime
 import os
+import streamlit as st
+
 
 # -------------------------------
-# Data Collection Functions
+# Weather Functions
 # -------------------------------
 
 def get_coordinates_from_zip(zipcode):
-    """Get latitude and longitude from US ZIP code using Zippopotam.us API."""
     url = f"http://api.zippopotam.us/us/{zipcode}"
-    try:
-        r = requests.get(url, timeout=10)
-        r.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        raise ValueError(f"ZIP lookup failed: {e}")
+    r = requests.get(url)
+    if r.status_code != 200:
+        raise ValueError("Invalid ZIP code or location not found.")
     data = r.json()
     lat = float(data['places'][0]['latitude'])
     lon = float(data['places'][0]['longitude'])
@@ -22,46 +21,30 @@ def get_coordinates_from_zip(zipcode):
 
 
 def get_weather_station(lat, lon):
-    """Get nearest weather location from weather.gov API."""
     url = f"https://api.weather.gov/points/{lat},{lon}"
-    try:
-        r = requests.get(url, timeout=10)
-        r.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        raise ValueError(f"Weather station lookup failed: {e}")
+    r = requests.get(url)
+    r.raise_for_status()
     data = r.json()
     return data["properties"]["observationStations"]
 
 
 def get_hourly_weather(stations_url):
-    """Get hourly observations from the nearest weather station."""
-    try:
-        r = requests.get(stations_url, timeout=10)
-        r.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        raise ValueError(f"Station request failed: {e}")
+    r = requests.get(stations_url)
+    r.raise_for_status()
     stations_data = r.json()
     if not stations_data["features"]:
         raise ValueError("No weather stations found nearby.")
-    
     station_id = stations_data["features"][0]["properties"]["stationIdentifier"]
     obs_url = f"https://api.weather.gov/stations/{station_id}/observations"
-    try:
-        r_obs = requests.get(obs_url, timeout=10)
-        r_obs.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        raise ValueError(f"Observation request failed: {e}")
+    r_obs = requests.get(obs_url)
+    r_obs.raise_for_status()
     return r_obs.json()["features"]
 
 
 def filter_nighttime_data(observations, start_hour=21, end_hour=6, tz_offset=-4):
-    """Extract average values from 9 PM to 6 AM."""
     temps, humidity, pressure, wind = [], [], [], []
-
     for obs in observations:
-        ts_utc = datetime.datetime.fromisoformat(
-            obs["properties"]["timestamp"].replace("Z", "+00:00")
-        )
+        ts_utc = datetime.datetime.fromisoformat(obs["properties"]["timestamp"].replace("Z", "+00:00"))
         local_time = ts_utc + datetime.timedelta(hours=tz_offset)
         if local_time.hour >= start_hour or local_time.hour <= end_hour:
             props = obs["properties"]
@@ -82,12 +65,82 @@ def filter_nighttime_data(observations, start_hour=21, end_hour=6, tz_offset=-4)
     }
 
 
+def get_historical_weather(lat, lon, date, start_hour=21, end_hour=6):
+    url = (
+        f"https://archive-api.open-meteo.com/v1/archive?"
+        f"latitude={lat}&longitude={lon}"
+        f"&start_date={date}&end_date={date}"
+        f"&hourly=temperature_2m,relative_humidity_2m,pressure_msl,windspeed_10m"
+    )
+    r = requests.get(url)
+    r.raise_for_status()
+    data = r.json()
+
+    df = pd.DataFrame({
+        "time": pd.to_datetime(data["hourly"]["time"]),
+        "temperature_C": data["hourly"]["temperature_2m"],
+        "humidity_percent": data["hourly"]["relative_humidity_2m"],
+        "pressure_Pa": data["hourly"]["pressure_msl"],
+        "wind_mps": data["hourly"]["windspeed_10m"]
+    })
+
+    df_night = df[(df["time"].dt.hour >= start_hour) | (df["time"].dt.hour <= end_hour)]
+
+    return {
+        "avg_temp_C": round(df_night["temperature_C"].mean(), 2),
+        "avg_humidity_percent": round(df_night["humidity_percent"].mean(), 2),
+        "avg_pressure_Pa": round(df_night["pressure_Pa"].mean(), 2),
+        "avg_wind_mps": round(df_night["wind_mps"].mean(), 2)
+    }
+
+
 # -------------------------------
-# User Input & Storage
+# Data Storage
 # -------------------------------
 
-def collect_user_data_streamlit(st):
-    """Collect daily self-reported data from Streamlit form."""
+def save_record(record, filename="sleep_data.csv"):
+    file_exists = os.path.exists(filename)
+    df = pd.DataFrame([record])
+    df.to_csv(filename, mode="a", index=False, header=not file_exists)
+    st.success(f"Data saved to {filename}")
+
+
+# -------------------------------
+# Streamlit UI
+# -------------------------------
+
+st.title("Sleep and Weather Logger")
+
+zipcode = st.text_input("Enter ZIP code (US)")
+date_input = st.date_input("Select date (leave default for today)", value=datetime.date.today())
+
+weather_avg = None
+lat, lon = None, None
+
+if st.button("Fetch Weather"):
+    try:
+        lat, lon = get_coordinates_from_zip(zipcode)
+
+        if date_input != datetime.date.today():
+            weather_avg = get_historical_weather(lat, lon, date_input.isoformat())
+            record_date = date_input.isoformat()
+        else:
+            stations_url = get_weather_station(lat, lon)
+            observations = get_hourly_weather(stations_url)
+            weather_avg = filter_nighttime_data(observations)
+            record_date = datetime.date.today().isoformat()
+
+        if not weather_avg:
+            st.error("No nighttime weather data available.")
+        else:
+            st.write("Nighttime weather summary:", weather_avg)
+
+    except Exception as e:
+        st.error(str(e))
+
+
+st.subheader("Daily Sleep Data Entry")
+if weather_avg:
     with st.form("user_data_form"):
         stress = st.slider("Stress/emotion level", 1, 5, 3)
         caffeine = st.number_input("Caffeine intake (cups)", min_value=0, max_value=10, value=0)
@@ -98,86 +151,25 @@ def collect_user_data_streamlit(st):
         dinner_time = st.text_input("Dinner time (HH:MM)")
         satiety = st.selectbox("Perceived satiety level", ["mild", "moderate", "full"])
         sleep_quality = st.slider("Sleep quality", 1, 5, 3)
+
         submitted = st.form_submit_button("Save Record")
-
-    return submitted, {
-        "stress_level": stress,
-        "caffeine_cups": caffeine,
-        "alcohol_before_bed": alcohol,
-        "screen_time_before_bed": screen_time,
-        "physical_activity": physical_activity,
-        "medication_usage": medication,
-        "dinner_time": dinner_time,
-        "satiety_level": satiety,
-        "sleep_quality": sleep_quality,
-    }
-
-
-def save_record(record, filename="sleep_data.csv"):
-    """Save record to CSV (with headers guaranteed)."""
-    write_header = not os.path.exists(filename) or os.path.getsize(filename) == 0
-    df = pd.DataFrame([record])
-    df.to_csv(filename, mode="a", index=False, header=write_header)
-    print(f"Data saved to {filename}")
-
-
-# -------------------------------
-# Streamlit Mode
-# -------------------------------
-
-if __name__ == "__main__":
-    import sys
-    if "streamlit" in sys.argv:
-        import streamlit as st
-        st.title("Sleep and Weather Logger")
-
-        # Always render ZIP input
-        zipcode = st.text_input("Enter ZIP code (US)")
-
-        # Section for fetching weather
-        st.subheader("Step 1: Get Weather Data")
-        fetch_weather = st.button("Fetch Weather")
-
-        weather_avg = None
-        lat, lon = None, None
-
-        if fetch_weather:
-            if not zipcode:
-                st.error("Please enter a ZIP code first.")
-            else:
-                try:
-                    lat, lon = get_coordinates_from_zip(zipcode)
-                    stations_url = get_weather_station(lat, lon)
-                    observations = get_hourly_weather(stations_url)
-                    weather_avg = filter_nighttime_data(observations)
-
-                    if not weather_avg:
-                        st.error("No nighttime weather data available.")
-                        st.stop()
-
-                    st.success("Weather data fetched successfully.")
-                    st.write("Nighttime weather summary:", weather_avg)
-
-                except Exception as e:
-                    st.error(str(e))
-
-        # Section for user input (always visible, but requires weather first)
-        st.subheader("Step 2: Log Your Daily Sleep Data")
-        if weather_avg is None:
-            st.info("Please fetch weather data first before entering sleep data.")
-        else:
-            submitted, user_data = collect_user_data_streamlit(st)
-            if submitted:
-                record = {
-                    "date": datetime.date.today().isoformat(),
-                    "lat": lat,
-                    "lon": lon,
-                    **user_data,
-                    **weather_avg
-                }
-                save_record(record)
-                st.success("Data saved!")
-                st.json(record)
-    else:
-        print("Run this app with: streamlit run sleep_app.py")
-
+        if submitted:
+            record = {
+                "date": record_date,
+                "lat": lat,
+                "lon": lon,
+                "stress_level": stress,
+                "caffeine_cups": caffeine,
+                "alcohol_before_bed": alcohol,
+                "screen_time_before_bed": screen_time,
+                "physical_activity": physical_activity,
+                "medication_usage": medication,
+                "dinner_time": dinner_time,
+                "satiety_level": satiety,
+                "sleep_quality": sleep_quality,
+                **weather_avg
+            }
+            save_record(record)
+            st.json(record)
+else:
+    st.info("Fetch weather data first before entering sleep data.")
