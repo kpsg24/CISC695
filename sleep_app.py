@@ -83,7 +83,7 @@ def get_historical_weather(lat, lon, date, start_hour=21, end_hour=6):
 
     df_night = df[(df["time"].dt.hour >= start_hour) | (df["time"].dt.hour <= end_hour)]
 
-    #return {
+    return {
         "avg_temp_C": round(df_night["temperature_C"].mean(), 2),
         "avg_humidity_percent": round(df_night["humidity_percent"].mean(), 2),
         "avg_pressure_Pa": round(df_night["pressure_Pa"].mean(), 2),
