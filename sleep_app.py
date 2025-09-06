@@ -4,10 +4,7 @@ import datetime
 import os
 import streamlit as st
 
-
-# -------------------------------
 # Weather Functions
-# -------------------------------
 
 def get_coordinates_from_zip(zipcode):
     url = f"http://api.zippopotam.us/us/{zipcode}"
@@ -86,17 +83,14 @@ def get_historical_weather(lat, lon, date, start_hour=21, end_hour=6):
 
     df_night = df[(df["time"].dt.hour >= start_hour) | (df["time"].dt.hour <= end_hour)]
 
-    return {
+    #return {
         "avg_temp_C": round(df_night["temperature_C"].mean(), 2),
         "avg_humidity_percent": round(df_night["humidity_percent"].mean(), 2),
         "avg_pressure_Pa": round(df_night["pressure_Pa"].mean(), 2),
         "avg_wind_mps": round(df_night["wind_mps"].mean(), 2)
     }
 
-
-# -------------------------------
 # Data Storage
-# -------------------------------
 
 def save_record(record, filename="sleep_data.csv"):
     file_exists = os.path.exists(filename)
@@ -104,12 +98,10 @@ def save_record(record, filename="sleep_data.csv"):
     df.to_csv(filename, mode="a", index=False, header=not file_exists)
     st.success(f"Data saved to {filename}")
 
-
-# -------------------------------
 # Streamlit UI
-# -------------------------------
 
-st.title("Sleep and Weather Logger")
+
+st.title("Sleep Quatily App")
 
 zipcode = st.text_input("Enter ZIP code (US)")
 date_input = st.date_input("Select date (leave default for today)", value=datetime.date.today())
@@ -117,7 +109,7 @@ date_input = st.date_input("Select date (leave default for today)", value=dateti
 weather_avg = None
 lat, lon = None, None
 
-if st.button("Fetch Weather"):
+if st.button("Next"):
     try:
         lat, lon = get_coordinates_from_zip(zipcode)
 
@@ -142,13 +134,14 @@ if st.button("Fetch Weather"):
 st.subheader("Daily Sleep Data Entry")
 if weather_avg:
     with st.form("user_data_form"):
-        stress = st.slider("Stress/emotion level", 1, 5, 3)
+        st.markdown("**Stress/Emotion Level**  1 = Very relaxed  5 = Very stressed")
+        stress = st.slider("Select your current stress or emotional level", 1, 5, 3)
         caffeine = st.number_input("Caffeine intake (cups)", min_value=0, max_value=10, value=0)
         alcohol = st.selectbox("Alcohol intake before bedtime", ["no", "yes"])
         screen_time = st.selectbox("Screen time before bedtime", ["no", "yes"])
         physical_activity = st.selectbox("Physical activity today", ["no", "yes"])
         medication = st.selectbox("Medication usage", ["no", "yes"])
-        dinner_time = st.text_input("Dinner time (HH:MM)")
+        last_meal_time = st.text_input("Time of your last meal before sleep (HH:MM, 24-hour format)",help="Enter the time of your final meal today, even if it wasn’t dinner. Leave blank if you didn’t eat.")
         satiety = st.selectbox("Perceived satiety level", ["mild", "moderate", "full"])
         sleep_quality = st.slider("Sleep quality", 1, 5, 3)
 
@@ -164,7 +157,7 @@ if weather_avg:
                 "screen_time_before_bed": screen_time,
                 "physical_activity": physical_activity,
                 "medication_usage": medication,
-                "dinner_time": dinner_time,
+                "last_meal_time": last_meal_time,
                 "satiety_level": satiety,
                 "sleep_quality": sleep_quality,
                 **weather_avg
