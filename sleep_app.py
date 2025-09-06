@@ -134,7 +134,7 @@ if st.button("Next"):
 st.subheader("Daily Sleep Data Entry")
 if weather_avg:
     with st.form("user_data_form"):
-        stress = st.slider("Select your current stress or emotional level 1 = Very relaxed  5 = Very stressed"", 1, 5, 3)
+        stress = st.slider("Select your current stress or emotional level 1 = Very relaxed  5 = Very stressed", 1, 5, 3)
         caffeine = st.number_input("Caffeine intake (cups)", min_value=0, max_value=10, value=0)
         alcohol = st.selectbox("Alcohol intake before bedtime", ["no", "yes"])
         screen_time = st.selectbox("Screen time before bedtime", ["no", "yes"])
@@ -142,7 +142,7 @@ if weather_avg:
         medication = st.selectbox("Medication usage", ["no", "yes"])
         last_meal_time = st.text_input("Time of your last meal before sleep (HH:MM, 24-hour format)",help="Enter the time of your final meal today, even if it wasn’t dinner. Leave blank if you didn’t eat.")
         satiety = st.selectbox("Perceived satiety level", ["mild", "moderate", "full"])
-        sleep_quality = st.slider("Sleep quality 1 = Very Bad  5 = Very Good"", 1, 5, 3)
+        sleep_quality = st.slider("Sleep quality 1 = Very Bad  5 = Very Good", 1, 5, 3)
 
         submitted = st.form_submit_button("Save Record")
         if submitted:
