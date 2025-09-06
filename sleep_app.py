@@ -2,14 +2,13 @@ import requests
 import pandas as pd
 import datetime
 import os
-import streamlit as st
 
-
-# -------------------------------
-# Weather Functions
-# -------------------------------
+# Helper functions
 
 def get_coordinates_from_zip(zipcode):
+    """
+    Get latitude and longitude from US ZIP code using Zippopotam.us API.
+    """
     url = f"http://api.zippopotam.us/us/{zipcode}"
     r = requests.get(url)
     if r.status_code != 200:
@@ -19,30 +18,42 @@ def get_coordinates_from_zip(zipcode):
     lon = float(data['places'][0]['longitude'])
     return lat, lon
 
-
 def get_weather_station(lat, lon):
+    """
+    Get nearest weather station from weather.gov API.
+    """
     url = f"https://api.weather.gov/points/{lat},{lon}"
     r = requests.get(url)
     r.raise_for_status()
     data = r.json()
     return data["properties"]["observationStations"]
 
-
 def get_hourly_weather(stations_url):
+    """
+    Get hourly observations from the nearest weather station.
+    """
     r = requests.get(stations_url)
     r.raise_for_status()
     stations_data = r.json()
     if not stations_data["features"]:
         raise ValueError("No weather stations found nearby.")
+    
     station_id = stations_data["features"][0]["properties"]["stationIdentifier"]
     obs_url = f"https://api.weather.gov/stations/{station_id}/observations"
     r_obs = requests.get(obs_url)
     r_obs.raise_for_status()
     return r_obs.json()["features"]
 
-
 def filter_nighttime_data(observations, start_hour=21, end_hour=6, tz_offset=-4):
-    temps, humidity, pressure, wind = [], [], [], []
+    """
+    Extract average values from 9 PM to 6 AM.
+    tz_offset is the timezone offset from UTC.
+    """
+    temps = []
+    humidity = []
+    pressure = []
+    wind = []
+
     for obs in observations:
         ts_utc = datetime.datetime.fromisoformat(obs["properties"]["timestamp"].replace("Z", "+00:00"))
         local_time = ts_utc + datetime.timedelta(hours=tz_offset)
@@ -58,118 +69,113 @@ def filter_nighttime_data(observations, start_hour=21, end_hour=6, tz_offset=-4)
                 wind.append(props["windSpeed"]["value"])
 
     return {
-        "avg_temp_C": round(sum(temps)/len(temps), 2) if temps else None,
-        "avg_humidity_percent": round(sum(humidity)/len(humidity), 2) if humidity else None,
-        "avg_pressure_Pa": round(sum(pressure)/len(pressure), 2) if pressure else None,
-        "avg_wind_mps": round(sum(wind)/len(wind), 2) if wind else None
+        "avg_temp_C": round(sum(temps)/len(temps),2) if temps else None,
+        "avg_humidity_percent": round(sum(humidity)/len(humidity),2) if humidity else None,
+        "avg_pressure_Pa": round(sum(pressure)/len(pressure),2) if pressure else None,
+        "avg_wind_mps": round(sum(wind)/len(wind),2) if wind else None
     }
 
-
-def get_historical_weather(lat, lon, date, start_hour=21, end_hour=6):
-    url = (
-        f"https://archive-api.open-meteo.com/v1/archive?"
-        f"latitude={lat}&longitude={lon}"
-        f"&start_date={date}&end_date={date}"
-        f"&hourly=temperature_2m,relative_humidity_2m,pressure_msl,windspeed_10m"
-    )
-    r = requests.get(url)
-    r.raise_for_status()
-    data = r.json()
-
-    df = pd.DataFrame({
-        "time": pd.to_datetime(data["hourly"]["time"]),
-        "temperature_C": data["hourly"]["temperature_2m"],
-        "humidity_percent": data["hourly"]["relative_humidity_2m"],
-        "pressure_Pa": data["hourly"]["pressure_msl"],
-        "wind_mps": data["hourly"]["windspeed_10m"]
-    })
-
-    df_night = df[(df["time"].dt.hour >= start_hour) | (df["time"].dt.hour <= end_hour)]
-
+def collect_user_data():
+    """
+    Collect daily self-reported data from user input.
+    """
+    stress = int(input("Stress/emotion level (1-5): "))
+    caffeine = int(input("Caffeine intake (cups, 0-5+): "))
+    alcohol = input("Alcohol intake before bedtime (yes/no): ").strip().lower()
+    screen_time = input("Screen time before bedtime (yes/no): ").strip().lower()
+    physical_activity = input("Physical activity today (yes/no): ").strip().lower()
+    medication = input("Medication usage (yes/no): ").strip().lower()
+    last_meal_time = input("Time of your last meal before sleep (HH:MM, 24-hour): ").strip()
+    satiety = input("Perceived satiety level (mild/moderate/full): ").strip().lower()
+    sleep_quality = int(input("Sleep quality (1-5): "))
+    
     return {
-        "avg_temp_C": round(df_night["temperature_C"].mean(), 2),
-        "avg_humidity_percent": round(df_night["humidity_percent"].mean(), 2),
-        "avg_pressure_Pa": round(df_night["pressure_Pa"].mean(), 2),
-        "avg_wind_mps": round(df_night["wind_mps"].mean(), 2)
+        "stress_level": stress,
+        "caffeine_cups": caffeine,
+        "alcohol_before_bed": alcohol,
+        "screen_time_before_bed": screen_time,
+        "physical_activity": physical_activity,
+        "medication_usage": medication,
+        "last_meal_time": last_meal_time,
+        "satiety_level": satiety,
+        "sleep_quality": sleep_quality
     }
-
-
-# -------------------------------
-# Data Storage
-# -------------------------------
 
 def save_record(record, filename="sleep_data.csv"):
+    """
+    Save record to CSV.
+    """
     file_exists = os.path.exists(filename)
     df = pd.DataFrame([record])
     df.to_csv(filename, mode="a", index=False, header=not file_exists)
-    st.success(f"Data saved to {filename}")
+    print(f"Data saved to {filename}")
 
+# Main CLI / Notebook / Streamlit
 
-# -------------------------------
-# Streamlit UI
-# -------------------------------
+def run_cli():
+    zipcode = input("Enter your ZIP code: ").strip()
+    lat, lon = get_coordinates_from_zip(zipcode)
+    stations_url = get_weather_station(lat, lon)
+    observations = get_hourly_weather(stations_url)
+    weather_avg = filter_nighttime_data(observations)
+    if not weather_avg:
+        print("No nighttime weather data available.")
+        return
+    user_data = collect_user_data()
+    record = {"date": datetime.date.today().isoformat(), "lat": lat, "lon": lon, **user_data, **weather_avg}
+    save_record(record)
+    print(record)
 
-st.title("Sleep and Weather Logger")
+if __name__ == "__main__":
+    import sys
+    if "streamlit" in sys.argv:
+        import streamlit as st
+        st.title("Sleep Quality APP")
+        zipcode = st.text_input("Enter ZIP code (US)")
+        if st.button("Next"):
+            try:
+                lat, lon = get_coordinates_from_zip(zipcode)
+                stations_url = get_weather_station(lat, lon)
+                observations = get_hourly_weather(stations_url)
+                weather_avg = filter_nighttime_data(observations)
+                if not weather_avg:
+                    st.error("No nighttime weather data available.")
+                    st.stop()
+                st.write("Nighttime weather summary:", weather_avg)
+                
+                with st.form("user_data_form"):
+                    st.markdown("**Stress/Emotion Level**  1 = Very calm / relaxed  5 = Very stressed / overwhelmed") 
+                    stress = st.slider("Select your current stress or emotional level", 1, 5, 3)
+                    caffeine = st.number_input("Caffeine intake (cups)", min_value=0, max_value=10, value=0)
+                    alcohol = st.selectbox("Alcohol intake before bedtime", ["no","yes"])
+                    screen_time = st.selectbox("Screen time before bedtime", ["no","yes"])
+                    physical_activity = st.selectbox("Physical activity today", ["no","yes"])
+                    medication = st.selectbox("Medication usage", ["no","yes"])
+                    last_meal_time = st.text_input("Time of your last meal before sleep (HH:MM, 24-hour format)",help="Enter the time of your final meal today, even if it wasn’t dinner. Leave blank if you didn’t eat.")
+                    satiety = st.selectbox("Perceived satiety level", ["mild","moderate","full"])
+                    sleep_quality = st.slider("Sleep quality",1,5,3)
+                    submitted = st.form_submit_button("Save Record")
+                    if submitted:
+                        record = {
+                            "date": datetime.date.today().isoformat(),
+                            "lat": lat,
+                            "lon": lon,
+                            "stress_level": stress,
+                            "caffeine_cups": caffeine,
+                            "alcohol_before_bed": alcohol,
+                            "screen_time_before_bed": screen_time,
+                            "physical_activity": physical_activity,
+                            "medication_usage": medication,
+                            "last_meal_time": last_meal_time,
+                            "satiety_level": satiety,
+                            "sleep_quality": sleep_quality,
+                            **weather_avg
+                        }
+                        save_record(record)
+                        st.success("Data saved!")
+                        st.json(record)
+            except Exception as e:
+                st.error(str(e))
+    else:
+        run_cli()
 
-zipcode = st.text_input("Enter ZIP code (US)")
-date_input = st.date_input("Select date (leave default for today)", value=datetime.date.today())
-
-weather_avg = None
-lat, lon = None, None
-
-if st.button("Fetch Weather"):
-    try:
-        lat, lon = get_coordinates_from_zip(zipcode)
-
-        if date_input != datetime.date.today():
-            weather_avg = get_historical_weather(lat, lon, date_input.isoformat())
-            record_date = date_input.isoformat()
-        else:
-            stations_url = get_weather_station(lat, lon)
-            observations = get_hourly_weather(stations_url)
-            weather_avg = filter_nighttime_data(observations)
-            record_date = datetime.date.today().isoformat()
-
-        if not weather_avg:
-            st.error("No nighttime weather data available.")
-        else:
-            st.write("Nighttime weather summary:", weather_avg)
-
-    except Exception as e:
-        st.error(str(e))
-
-
-st.subheader("Daily Sleep Data Entry")
-if weather_avg:
-    with st.form("user_data_form"):
-        stress = st.slider("Stress/emotion level", 1, 5, 3)
-        caffeine = st.number_input("Caffeine intake (cups)", min_value=0, max_value=10, value=0)
-        alcohol = st.selectbox("Alcohol intake before bedtime", ["no", "yes"])
-        screen_time = st.selectbox("Screen time before bedtime", ["no", "yes"])
-        physical_activity = st.selectbox("Physical activity today", ["no", "yes"])
-        medication = st.selectbox("Medication usage", ["no", "yes"])
-        dinner_time = st.text_input("Dinner time (HH:MM)")
-        satiety = st.selectbox("Perceived satiety level", ["mild", "moderate", "full"])
-        sleep_quality = st.slider("Sleep quality", 1, 5, 3)
-
-        submitted = st.form_submit_button("Save Record")
-        if submitted:
-            record = {
-                "date": record_date,
-                "lat": lat,
-                "lon": lon,
-                "stress_level": stress,
-                "caffeine_cups": caffeine,
-                "alcohol_before_bed": alcohol,
-                "screen_time_before_bed": screen_time,
-                "physical_activity": physical_activity,
-                "medication_usage": medication,
-                "dinner_time": dinner_time,
-                "satiety_level": satiety,
-                "sleep_quality": sleep_quality,
-                **weather_avg
-            }
-            save_record(record)
-            st.json(record)
-else:
-    st.info("Fetch weather data first before entering sleep data.")
